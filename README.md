@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+[![Paper](https://img.shields.io/badge/Paper-PDF-red)](assets/ComplementaryRL.pdf) [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
 **Co-evolving policy actors and experience extractors for efficient experience-driven agent RL**
 
