@@ -1,0 +1,436 @@
+############################ Env #####################################
+max_actions_per_traj: 30
+action_pattern: <answer>(.*?)</answer>
+action_pattern_shop: Thought:\s*(.*?)\n+Action:\s*(.*?)(?:\n|$)
+max_steps_frozen_lake: 30
+env_manager_frozen_lake: roll.pipeline.agentic.env_manager.traj_env_manager.TrajEnvManager
+env_manager_shop: roll.pipeline.agentic.env_manager.traj_env_manager_shop.TrajEnvManager
+env_manager_cls: roll.pipeline.agentic.env_manager.traj_env_manager_alfworld.TrajEnvManager
+max_new_tokens_per_step: 4096
+max_tool_uses: 2
+
+agent_system_template_with_memory: |
+  You're a helpful assistant. You are a good game player. You are aiming to get high reward in the game. 
+  You optionally have access to relevant knowledge heuristics from previous experiences to help you make better decisions. 
+  Carefully analyze the knowledge heuristics before your each action, think which knowledge heuristics are relevant to the current task and how to use it to guide your actions.
+  Remember, the knowledge heuristics is not always correct, you need to carefully analyze it and decide whether to use it or not.
+  Put your thoughts between <think> ... </think> tags. Respond with one action wrapped in <answer> ... </answer> tags.
+
+agent_template: |
+  {observation}
+  Turn {turn_idx}:
+  {suffix}
+  Now, decide the next action:
+
+minihack_maze_system_template: |
+  You are navigating a maze with varied terrain and obstacles. Plan a route toward the down staircase (>),
+  avoiding dead ends, hazards (lava, ice, traps), and monsters. Watch for objects that might help.
+  Evaluate alternate paths if blocked. Put your thoughts between <think> ... </think> tags. Respond with one action wrapped in <answer> ... </answer> tags.
+
+minihack_hide_n_seek_system_template: |
+  You are an agent in the MiniHack HideNSeek environment.
+
+  YOUR MISSION:
+  Find and kill an invisible monster that is hiding somewhere on this level.
+
+  KEY RULES:
+  1.  The monster is permanently invisible. You will NOT see it on the map until you are standing on the exact same square.
+  2.  Once you step onto the monster's tile, it will become visible, and combat will begin automatically. You must then attack it to complete your mission.
+
+  Think step-by-step about which parts of the room you have already searched. Your goal is to cover the entire floor area.
+
+  Put your reasoning between `<think>...</think>` tags. Your final output must be a single game command wrapped in `<answer>...</answer>` tags, such as `<answer>north</answer>`.
+
+
+minihack_memento_system_template: |
+  You are in the MiniHack Memento puzzle where short timed sequences test your memory of glyph positions, doors, and hazards.
+  Carefully read the latest messages—they often describe the hidden target or the effect of switches. Memorize the revealed layout, then act decisively before the information expires.
+  Use safe probing (e.g., search, wait, move cautiously) if unsure, but avoid wasting turns that let monsters or traps reset progress.
+  Track key anchors such as staircase coordinates, levers, and boulder arrangements; update your plan whenever new information appears.
+  Put your thoughts between <think> ... </think> tags. Respond with one action wrapped in <answer> ... </answer> tags.
+
+minihack_lavacross_system_template: |
+  You are an agent playing the MiniHack environment "LavaCross-Levitate-Ring-Pickup-Full".
+
+  **YOUR PRIMARY GOAL:** To pick up the ring located across a patch of lethal lava.
+
+  **THE CHALLENGE:** You cannot cross the lava directly. Stepping on lava without protection is fatal and will end the game.
+
+  **THE SOLUTION:** You must find and use a `potion of levitation` that is located somewhere in your starting area. Drinking this potion will allow you to float safely over the lava.
+
+  **RESPONSE FORMAT:**
+  - First, reason about your current situation and next step inside `<think> ... </think>` tags.
+  - Then, output exactly one game action, wrapped in `<answer> ... </answer>` tags. For example: `<answer>north</answer>` or `<answer>pickup</answer>`.
+
+minihack_nav_train_template: |
+  Observation:
+  {observation}
+
+  Think carefully, then choose your next action:
+
+minihack_skill_train_system_template: |
+  You must complete the NetHack skill task. Read the messages, interpret the glyphs,
+  and decide the single best action.
+  - Put your thoughts between <think> ... </think> tags. Respond with one action wrapped in <answer> ... </answer> tags.
+  - Moreover, you may be provided with a knowledge heuristics, you should think and consider whether the knowledge heuristics is relevant to the current task, does it helpful for sucess, and how to use it if it is helpful.
+
+FrozenLakeThink:
+  env_type: frozen_lake
+  max_steps: ${max_steps_frozen_lake}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${agent_system_template_with_memory}
+  agent_template: ${agent_template}
+  env_config:
+    action_pattern: ${action_pattern}
+    max_steps: ${max_steps_frozen_lake}
+    format_penalty: 0.0
+    is_slippery: true
+    size: 6
+    p: 0.95
+    env_instruction: "You are solving the FrozenLake puzzle. Forbid the hole and go to the goal. You may move to the unintended direction due to the slippery ice, therefore you need to be careful and consider the possible unintended directions."
+    memory_template: |
+      Morever, below is distilled knowledge from earlier experiences.
+      Use it to guide your actions without overfitting.
+      Some insights may be overly specific, so identify only what is most relevant.
+      Explicitly cite the helpful knowledge in your reasoning before selecting an action at each step.
+      Knowledge: 
+      {memory_message}
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+    
+MiniHackMaze:
+  env_type: minihack
+  max_steps: ${max_steps_frozen_lake}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${minihack_maze_system_template}
+  agent_template: ${minihack_nav_train_template}
+  env_config:
+    env_type: navigation
+    env_name: MiniHack-MazeWalk-9x9-v0
+    max_steps: ${max_actions_per_traj}
+    observation_keys: ["glyphs", "blstats", "message", "inv_strs", "chars_crop", "glyphs_crop"]
+    render_mode: text
+    use_skill_env: false
+    random_des: false
+    penalty_step: 0.0
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+
+MiniHackHideNSeek:
+  env_type: minihack
+  max_steps: ${max_steps_frozen_lake}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${minihack_hide_n_seek_system_template}
+  agent_template: ${minihack_nav_train_template}
+  env_config:
+    env_type: navigation
+    env_name: MiniHack-HideNSeek-v0
+    max_steps: ${max_actions_per_traj}
+    observation_keys: ["glyphs", "blstats", "message", "inv_strs", "chars_crop", "glyphs_crop"]
+    render_mode: text
+    use_skill_env: false
+    random_des: false
+    penalty_step: 0.0
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+
+MiniHackMemento:
+  env_type: minihack
+  max_steps: ${max_steps_frozen_lake}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${minihack_memento_system_template}
+  agent_template: ${minihack_nav_train_template}
+  env_config:
+    env_type: navigation
+    env_name: MiniHack-Memento-Short-F2-v0
+    max_steps: ${max_actions_per_traj}
+    observation_keys: ["glyphs", "blstats", "message", "inv_strs", "chars_crop", "glyphs_crop"]
+    render_mode: text
+    use_skill_env: false
+    random_des: false
+    penalty_step: 0.0
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+
+MiniHackLavaCrossLevitateRingPickupFull:
+  env_type: minihack
+  max_steps: ${max_steps_frozen_lake}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${minihack_lavacross_system_template}
+  agent_template: ${minihack_nav_train_template}
+  env_config:
+    env_type: skill
+    env_name: MiniHack-LavaCross-Levitate-Ring-Pickup-Full
+    max_steps: ${max_actions_per_traj}
+    observation_keys: ["glyphs", "blstats", "message", "inv_strs", "chars_crop", "glyphs_crop"]
+    render_mode: text
+    use_skill_env: false
+    random_des: false
+    penalty_step: 0.0
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+
+MiniHackSkill:
+  env_type: minihack
+  max_steps: ${max_steps_frozen_lake}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${minihack_skill_train_system_template}
+  agent_template: ${minihack_nav_train_template}
+  env_config:
+    env_type: skill
+    des_file: null
+    random_des: true
+    map_width: 8
+    map_height: 8
+    obstacle_density: 0.15
+    wall_type: "|"  # Options: "|", "-", "#", " "
+    obstacle_terrain_types: ["{", "T", "L", "I", "C", "K"]  # fountain, tree, lava, ice
+    obstacle_terrain_weights: [0.3, 0.3, 0.2, 0.1, 0.1]  # Weighted selection
+    enable_monsters: false
+    enable_objects: true
+    object_density: 0.15
+    enable_traps: true
+    trap_density: 0.05
+    max_steps: ${max_actions_per_traj}
+    observation_keys: ['glyphs', 'blstats', 'message', 'inv_strs', "chars_crop", "glyphs_crop"]
+    render_mode: text
+    use_skill_env: true
+    lit: false
+    premapped: false
+    penalty_step: 0.0
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+MiniHackRoomUltimate:
+  env_type: minihack
+  max_steps: ${max_steps_frozen_lake}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${minihack_maze_system_template}
+  agent_template: ${minihack_nav_train_template}
+  env_config:
+    env_type: navigation
+    env_name: MiniHack-Room-Ultimate-5x5-v0
+    max_steps: ${max_actions_per_traj}
+    observation_keys: ["glyphs", "message", "chars_crop", "glyphs_crop", "screen_descriptions"]
+    render_mode: text
+    use_skill_env: false
+    random_des: false
+    penalty_step: 0.0
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+
+Sokoban:
+  env_type: sokoban
+  max_steps: ${max_actions_per_traj}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_frozen_lake}
+  use_thread_lock: true
+  agent_system_template: ${agent_system_template_with_memory}
+  agent_template: ${agent_template}
+  env_config:
+    action_pattern: ${action_pattern}
+    max_steps: ${max_actions_per_traj}
+    format_penalty: 0.0
+    dim_room: [6, 6]
+    num_boxes: 2
+    search_depth: 30
+    grid_lookup: { 0: "W", 1: ".", 2: "G", 3: "C", 4: "B", 5: "A", 6: "@" }
+    grid_vocab: { "W": "wall", ".": "empty", "G": "target", "C": "box on target", "B": "box", "A": "player", "@": "player on target" }
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+  
+AlfworldEnvTrain:
+  env_type: "alfworld"
+  use_thread_lock: True
+  max_steps: ${max_actions_per_traj}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_cls}
+  enable_entropy_analysis: False
+  agent_system_template: |
+    Imagine you are an expert agent in a household environment and your target is to perform valid actions to complete the task goal. At the beginning of your interactions, you will be given your goal to accomplish and the detailed observstion of objects and receptacles in the current environment. You are limited to act with known objects and receptacles to achieve your goal.
+    In your turn, you will be given all the reasoning process, actions and environmental feedback from previous turns. You should reason step by step, first planning based on previous information, and then outputting valid actions to be performed in this round.
+    If the environment information is "Nothing happens", it means that your current action is not helpful for completing the task, and you should have more attempts.
+
+    *Action requirements*
+    The available actions are:
+    1. go to {recep}
+    2. take {obj} from {recep}
+    3. put {obj} in/on {recep}
+    4. open {recep}
+    5. use {obj}/{recep}
+    6. clean {obj} with {recep}
+    7. heat {obj} with {recep}
+    8. cool {obj} with {recep}
+    9. inventory
+    where {obj} and {recep} correspond to objects and receptacles.
+
+    *Format requirements*
+    Only one action can be performed per turn. The response format should be <think>[your thought]</think>\n<answer>[your action]</answer>.
+
+  agent_obs_template: |
+    OBSERVATION: 
+    {observation}
+
+  agent_last_obs_template: |
+    {observation}
+
+  max_tokens: ${max_tokens_per_step}
+  env_config:
+    mode: train 
+    data_yaml: ./roll/pipeline/agentic/env/alfworld/eval_configs/base_config.yaml
+    train_idx_range: [0, 1465]
+    val_ood_idx_range: [0, 133]
+    max_steps:  ${max_actions_per_traj}
+    label_path: ./roll/pipeline/agentic/env/alfworld/data
+    enable_entropy_analysis: True
+    format_penalty: 0.0
+    json_dir: ${base_dir}/json_log
+    action_pattern: <think>(.*?)</think>\s*<answer>(.*?)</answer>($|\n)
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}
+
+AlfworldEnvVal:
+  env_type: "alfworld"
+  use_thread_lock: True
+  max_steps: ${max_actions_per_traj}
+  max_tokens_per_step: ${max_tokens_per_step}
+  env_manager_cls: ${env_manager_cls}
+  enable_entropy_analysis: False
+  agent_system_template: |
+    Imagine you are an expert agent in a household environment and your target is to perform valid actions to complete the task goal. At the beginning of your interactions, you will be given your goal to accomplish and the detailed observstion of objects and receptacles in the current environment. You are limited to act with known objects and receptacles to achieve your goal.
+    In your turn, you will be given all the reasoning process, actions and environmental feedback from previous turns. You should reason step by step, first planning based on previous information, and then outputting valid actions to be performed in this round.
+    If the environment information is "Nothing happens", it means that your current action is not helpful for completing the task, and you should have more attempts.
+
+    *Action requirements*
+    The available actions are:
+    1. go to {recep}
+    2. take {obj} from {recep}
+    3. put {obj} in/on {recep}
+    4. open {recep}
+    5. use {obj}/{recep}
+    6. clean {obj} with {recep}
+    7. heat {obj} with {recep}
+    8. cool {obj} with {recep}
+    9. inventory
+    where {obj} and {recep} correspond to objects and receptacles.
+
+    *Format requirements*
+    1. Only one action can be performed per turn. 
+    2. The response format should be :
+      <think> [your thought] </think>
+      <answer> [your action] </answer>.
+  
+  agent_obs_template: |
+    OBSERVATION: 
+    {observation}
+
+  agent_last_obs_template: |
+    {observation}
+    
+  max_tokens: ${max_tokens_per_step}
+  env_config:
+    mode: val_ood 
+    data_yaml: ./roll/pipeline/agentic/env/alfworld/eval_configs/base_config.yaml
+    train_idx_range: [0, 1465]
+    val_ood_idx_range: [0, 133]
+    max_steps:  ${max_actions_per_traj}
+    label_path: ./roll/pipeline/agentic/env/alfworld/data
+    enable_entropy_analysis: True
+    format_penalty: 0.0
+    json_dir: ${base_dir}/json_log
+    action_pattern: <think>(.*?)</think>\s*<answer>(.*?)</answer>($|\n)
+  tool_wrapper:
+    wrapper_args:
+      tool_reward: 0
+      tool_success_reward: 0
+      max_tool_uses: ${max_tool_uses}
+    tool_configs:
+      - tool_id: knowledge_search_and_ask
+        tool_args:
+          return_interaction: true
+          max_search_results: ${max_tool_uses}

@@ -1,0 +1,293 @@
+defaults:
+  - ./memory_prompts@_here_
+  - ./multitask_env_tool.yaml@_here_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+max_tokens_per_step: 4096
+
+exp_name: "minihack_complementaryrl_room"
+seed: 42
+base_dir: /data/experiments/exps/multitask/${exp_name}
+logging_dir: ${base_dir}/logs
+output_dir: ${base_dir}/models
+
+track_with: tensorboard
+tracker_kwargs:
+  log_dir: ${base_dir}/tf_logs
+
+checkpoint_config:
+  type: file_system
+  output_dir: ${base_dir}/models
+
+num_gpus_per_node: 8
+
+max_steps: 512
+save_steps: 100
+logging_steps: 1
+eval_steps: 1
+resume_from_checkpoint: false
+
+rollout_batch_size: 128
+val_batch_size: 128
+sequence_length: 32768
+
+advantage_clip: null
+reward_clip: null
+whiten_advantages: false
+whiten_advantages_shift_mean: false
+use_kl_loss: false
+kl_loss_coef: 0
+ppo_epochs: 1
+adv_estimator: "grpo"
+init_kl_coef: 0.0
+entropy_loss_coef: 0
+max_grad_norm: 1.0
+# loss_agg_mode: "token-mean"
+dual_clip_loss: false
+pg_clip: 0.2
+
+pretrain: Qwen/Qwen2.5-7B-Instruct
+reward_pretrain: Qwen/Qwen2.5-7B-Instruct
+
+grouped_actor_pg:
+  enable: true
+  group_key: evolve_with_memory
+  pg_variant_wo_memory: ppo
+  pg_variant_w_memory: ppo
+  strict: true
+  log_metrics: true
+
+actor_train:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: false
+    dtype: bf16
+    model_type: ~
+  training_args:
+    learning_rate: 1.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 64
+    warmup_steps: 0
+    warmup_ratio: 0
+    lr_scheduler_type: constant
+  strategy_args:
+    strategy_name: megatron_train
+    strategy_config:
+      tensor_model_parallel_size: 4
+      pipeline_model_parallel_size: 1
+      expert_model_parallel_size: 1
+      context_parallel_size: 1
+      use_distributed_optimizer: true
+      recompute_granularity: full
+  device_mapping: list(range(0,8))
+  infer_batch_size: 1
+
+actor_infer:
+  model_args:
+    disable_gradient_checkpointing: true
+    dtype: bf16
+  generating_args:
+    max_new_tokens: ${max_tokens_per_step} # single-turn response length
+    top_p: 0.99
+    top_k: 100
+    num_beams: 1
+    temperature: 0.99
+    num_return_sequences: 1
+    stop_strings: ["</knowledge_search_and_ask>"]
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.85
+      block_size: 16
+      load_format: auto
+      max_num_seqs: 1024
+      max_num_batched_tokens: 8096
+      enable_prefix_caching: true
+  device_mapping: list(range(0,8))
+
+reference:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: true
+    dtype: bf16
+    model_type: ~
+  strategy_args:
+    strategy_name: megatron_infer
+    strategy_config:
+      tensor_model_parallel_size: 4
+      pipeline_model_parallel_size: 1
+      expert_model_parallel_size: 1
+      context_parallel_size: 1
+  device_mapping: list(range(0,8))
+  infer_batch_size: 1
+
+reward_normalization:
+  grouping: traj_group_id_w_or_wo_memory # 可以tags(env_type)/traj_group_id(group)/batch(rollout_batch)... group_by计算reward/adv
+  method: mean # asym_clip / identity / mean_std
+
+train_env_manager:
+  max_env_num_per_worker: 16
+  num_env_groups: 16
+  group_size: 8
+  tags: [MiniHackRoomUltimate]
+  num_groups_partition: [16] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+
+val_env_manager:
+  max_env_num_per_worker: 16
+  num_env_groups: 128
+  group_size: 1 # should be set to 1 because val temperature is set to 0 and same prompt leads to same output
+  tags: [MiniHackRoomUltimate]
+  num_groups_partition: [128] # TODO: If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+
+
+custom_envs:
+  FrozenLakeThink:
+    ${FrozenLakeThink}
+  MiniHackMaze:
+    ${MiniHackMaze}
+  MiniHackRoomUltimate:
+    ${MiniHackRoomUltimate}
+
+reference_for_memory: false
+memory_advantage_clip: null
+# memory_loss_agg_mode: token-mean
+memory_adv_estimator: reinforce
+memory_reward_normalization:
+  grouping: batch
+  method: mean
+memory_whiten_advantages: false
+memory_whiten_advantages_shift_mean: false
+memory_whiten_rewards: false
+memory_entropy_loss_coef: 0
+memory_use_kl_loss: false
+memory_kl_loss_coef: 0
+no_memory_traj_per_env_group: 4
+memory_score_penalty: 0.0
+use_entropy_memory: false
+question_on_all_turns: False
+memory_training_batch_size: 64
+memory_training_buffer_size: 64
+memory_training_buffer_enable: true
+memory_sequence_length: 65536
+memory_repeat_cooldown_steps: 1
+memory_pg_variant: "cispo"
+memory_ppo_epochs: 1
+
+memory_config:
+  enable: True
+  memory_actor_enable_training: True
+  memory_type: trajectory_memory
+  memory_structure: multi_task_tabuler
+  memory_save_path: ${base_dir}/memory
+  memory_integration_strategy: trajectory_based
+  memory_save_interval: 1
+  query_batch_size: 32
+  query_batch_timeout: 0.005
+  query_cache_size: 1000
+  faiss_rebuild_threshold: 100
+  use_memory_title_for_key: false
+  # memory_format_pattern: '<title>(?P<title>.*?)</title>\s*<content>(?P<content>.*?)</content>'
+  memory_format_pattern: null
+  dedup_similarity_threshold: null
+  dedup_device: cpu
+  memory_warmup_interval: 5
+  actor_critic_sys_prompt: ${ACTOR_CRITIC_SYS_PROMPT_251113}
+  actor_critic_user_prompt: ${ACTOR_CRITIC_USER_PROMPT_251113}
+  searcher:
+    diversity_enable: true
+    diversity_candidate_multiplier: 16
+    diversity_recent_seconds: 300
+    diversity_lambda: 0.4
+    diversity_dropout_p: 0.5
+    memory_search_strategy: embedding_similarity
+    memory_fetch_num: 1
+    world_size: 4
+    num_gpus_per_worker: 1
+    device_mapping: list(range(8, 12))
+  embedding_model:
+    pool_type: cls
+    model_args:
+      model_name_or_path: Qwen3-Embedding-0.6B
+      dtype: bf16
+    world_size: 2
+    device_mapping: list(range(12, 14))
+    num_gpus_per_worker: 1
+    strategy_args:
+      strategy_name: vllm
+      strategy_config:
+        gpu_memory_utilization: 0.2
+        block_size: 32
+        load_format: auto
+        task: embed
+  updater:
+    memory_update_strategy: fifo
+    memory_size: 20000
+    world_size: 1
+  memory_model:
+    enable_merging: true
+    merging_interval: 5
+    merging_size: null
+    max_merging_item_per_call: 5
+    merging_system_prompt: ${MERGING_PROMPT_SYS_PROMPT_251207}
+    merging_user_prompt: ${MERGING_PROMPT_USE_PROMPT_251201}
+    infer_batch_size: 1
+    memory_model_type: local_model
+    tool_use_system_prompt: ${TOOL_USE_SYS_PROMPT_251203}
+    tool_use_user_prompt: ${TOOL_USE_USE_PROMPT_251203}
+    memory_model_build_message_pattern: null
+    model_args:
+      model_name_or_path: Qwen/Qwen3-4B-Thinking-2507
+      attn_implementation: fa2
+      disable_gradient_checkpointing: true
+    device_mapping: list(range(8, 16))
+    generating_args:
+      max_new_tokens: 8192 # single-turn response length
+      top_p: 0.99
+      temperature: 1.0
+    strategy_args:
+      strategy_name: vllm
+      strategy_config:
+        gpu_memory_utilization: 0.7
+        block_size: 16
+        load_format: auto
+        max_model_len: 65536
+        enforce_eager: false
+        max_num_batched_tokens: 8192
+        tensor_parallel_size: 4
+        enable_prefix_caching: True
+    memory_model_user_prompt: ${FUNCTIONAL_MEMORY_MODEL_USER_PROMPT_251223}
+    memory_model_system_prompt: ${FUNCTIONAL_MEMORY_MODEL_SYS_PROMPT_VOTING_251207}
+    memory_model_with_functional_operations: True
+    memory_model_max_functional_operations: 3
+    memory_model_interaction_output_dir: ${base_dir}/memory_model_interaction
+  memory_actor_train:
+    model_args:
+      model_name_or_path: Qwen/Qwen3-4B-Thinking-2507
+      attn_implementation: fa2
+      disable_gradient_checkpointing: false
+      dtype: bf16
+      model_type: ~
+    training_args:
+      learning_rate: 1.0e-6
+      weight_decay: 0
+      per_device_train_batch_size: 1
+      gradient_accumulation_steps: 64
+      warmup_steps: 0
+      warmup_ratio: 0
+      lr_scheduler_type: constant
+    strategy_args:
+      strategy_name: megatron_train
+      strategy_config:
+        tensor_model_parallel_size: 4
+        pipeline_model_parallel_size: 1
+        context_parallel_size: 2
+        use_distributed_optimizer: true
+        recompute_granularity: full
+    device_mapping: list(range(8, 16))
+    infer_batch_size: 1
+    is_memory_model: true
