@@ -1222,13 +1222,16 @@ class MemoryActorPipeline(AgenticPipeline):
                         offload_refs.extend(self.memory_actor_train.offload_states(blocking=False))
 
                     # Sync Model Weight & Do Eval
-                    # CRITICAL: Flush pending memory updates before suspending to avoid data loss
-                    # We explicitly pass timeout=None to wait indefinitely until all memory updates are processed
-                    # This ensures strict consistency: memory state is fully updated before the next rollout search begins
+                    # CRITICAL: Flush pending memory updates before suspending to avoid data loss.
+                    # If memory_flush_timeout is None, waits indefinitely until all updates complete.
+                    # If a timeout is set, the main process unblocks after the timeout while any
+                    # remaining updates continue running in the background on the memory actor.
                     flush_ref = None
                     if self.global_memory_manager is not None:
                         # if self.global_memory_manager is not None and self._warmup_complete:
-                        flush_ref = self.global_memory_manager.flush_pending_updates_async(timeout=None)
+                        flush_ref = self.global_memory_manager.flush_pending_updates_async(
+                            timeout=self.pipeline_config.memory_config.memory_flush_timeout
+                        )
 
                     if flush_ref is not None:
                         with Timer(name="flush_pending_updates", logger=None) as flush_pending_updates_timer:

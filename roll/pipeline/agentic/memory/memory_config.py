@@ -234,9 +234,16 @@ class MemoryConfig:
     memory_save_path: Optional[str] = field(default=None, metadata={"help": "The path to the memory."})
     memory_save_interval: int = field(default=1000, metadata={"help": "The interval to save the memory."})
     memory_should_save: bool = field(default=True, metadata={"help": "Whether to save the memory."})
-    memory_flush_timeout: float = field(
-        default=60.0,
-        metadata={"help": "Timeout in seconds for flushing pending updates before suspend."},
+    memory_flush_timeout: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": (
+                "Timeout in seconds for flushing pending memory updates before suspend. "
+                "When None (default), waits indefinitely until all updates complete. "
+                "When set, the flush returns after the timeout and any remaining updates "
+                "continue running in the background on the memory actor."
+            )
+        },
     )
     searcher: SearcherConfig = field(
         default_factory=SearcherConfig,
