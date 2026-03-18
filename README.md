@@ -51,7 +51,7 @@ For full ROLL installation documentation, see: [https://alibaba.github.io/ROLL/d
 ### Step 1 — Clone the Repository
 
 ```bash
-git clone https://github.com/<your-org>/ComplementaryRL.git
+git clone https://github.com/pUmpKin-Co/ComplementaryRL.git
 cd ComplementaryRL
 ```
 
