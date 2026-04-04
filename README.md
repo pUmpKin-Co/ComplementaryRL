@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Paper](https://img.shields.io/badge/Paper-PDF-red)](assets/ComplementaryRL.pdf) [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+[![Paper](https://img.shields.io/badge/Paper-PDF-red)](assets/ComplementaryRL.pdf) [![Blog](https://img.shields.io/badge/Blog-Notion-black)](https://thinkable-technician-883.notion.site/Extract-and-Evolve-How-Claude-Code-and-Complementary-RL-Architect-Agent-Memory-335d4688ded080869e98f6684648cddc) [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
 **Co-evolving policy actors and experience extractors for efficient experience-driven agent RL**
 
