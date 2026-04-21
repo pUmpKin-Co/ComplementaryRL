@@ -19,6 +19,10 @@ from roll.distributed.scheduler.protocol import DataProto
 from roll.distributed.scheduler.resource_manager import ResourceManager
 from roll.models.model_providers import default_tokenizer_provider
 from roll.pipeline.agentic.agentic_pipeline import AgenticPipeline, compute_data_metrics
+from roll.pipeline.agentic.async_memory_fencing import (
+    fence_memory_updates_before_async_train,
+    should_flush_pending_updates_before_rollout,
+)
 from roll.pipeline.agentic.multi_agentic_config import MemoryActorConfig
 from roll.pipeline.agentic.utils import (
     compute_discounted_returns,
@@ -1227,7 +1231,9 @@ class MemoryActorPipeline(AgenticPipeline):
                     # If a timeout is set, the main process unblocks after the timeout while any
                     # remaining updates continue running in the background on the memory actor.
                     flush_ref = None
-                    if self.global_memory_manager is not None:
+                    if self.global_memory_manager is not None and should_flush_pending_updates_before_rollout(
+                        has_pending_memory_train=self._has_pending_memory_train()
+                    ):
                         # if self.global_memory_manager is not None and self._warmup_complete:
                         flush_ref = self.global_memory_manager.flush_pending_updates_async(
                             timeout=self.pipeline_config.memory_config.memory_flush_timeout
@@ -1660,7 +1666,14 @@ class FullyAsyncMemoryActorPipeline(MemoryActorPipeline):
                     train_batch = self.adjust_memory_batch(train_batch, mode=self.pipeline_config.batch_adjust_mode)
 
                     if self.global_memory_manager is not None:
-                        self.global_memory_manager.suspend(global_step)
+                        with Timer(name="flush_pending_updates_before_async_memory_train", logger=None) as flush_timer:
+                            flushed_count = fence_memory_updates_before_async_train(
+                                memory_manager=self.global_memory_manager,
+                                flush_timeout=self.pipeline_config.memory_config.memory_flush_timeout,
+                                global_step=global_step,
+                            )
+                        metrics["memory/flush_before_async_train_count"] = flushed_count
+                        metrics["time/flush_pending_updates_before_async_memory_train"] = flush_timer.last
 
                     self.memory_actor_train.load_states(blocking=True)
                     memory_train_metrics, train_metrics_refs = self._start_memory_model_train(train_batch, global_step)
