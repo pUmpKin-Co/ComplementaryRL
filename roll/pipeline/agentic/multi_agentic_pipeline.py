@@ -22,6 +22,7 @@ from roll.pipeline.agentic.agentic_pipeline import AgenticPipeline, compute_data
 from roll.pipeline.agentic.async_memory_fencing import (
     fence_memory_updates_before_async_train,
     should_flush_pending_updates_before_rollout,
+    unwrap_waitable_object_refs,
 )
 from roll.pipeline.agentic.multi_agentic_config import MemoryActorConfig
 from roll.pipeline.agentic.utils import (
@@ -967,13 +968,15 @@ class MemoryActorPipeline(AgenticPipeline):
         metrics.update(self._collect_train_step_metrics(actor_train_metrics_refs))
         return metrics
 
-    def _collect_train_step_metrics(self, train_metrics_refs: List[ray.ObjectRef]) -> Dict[str, Any]:
+    def _collect_train_step_metrics(self, train_metrics_refs: List[Any]) -> Dict[str, Any]:
+        if not train_metrics_refs:
+            return {}
         train_metrics: DataProto = DataProto.materialize_concat(data_refs=train_metrics_refs)
         return reduce_metrics(train_metrics.meta_info.pop("metrics", {}))
 
     def _start_memory_model_train(
         self, train_batch: DataProto, global_step: int
-    ) -> Tuple[Dict[str, Any], List[ray.ObjectRef]]:
+    ) -> Tuple[Dict[str, Any], List[Any]]:
         metrics = {}
 
         if self.pipeline_config.reference_for_memory:
@@ -1609,9 +1612,13 @@ class FullyAsyncMemoryActorPipeline(MemoryActorPipeline):
             return
 
         train_metrics_refs = self._pending_memory_train["train_metrics_refs"]
+        waitable_train_metrics_refs = unwrap_waitable_object_refs(train_metrics_refs)
+        if not waitable_train_metrics_refs:
+            self._finalize_pending_memory_train(global_step=global_step, metrics=metrics)
+            return
         ready_refs, remaining_refs = ray.wait(
-            train_metrics_refs,
-            num_returns=len(train_metrics_refs),
+            waitable_train_metrics_refs,
+            num_returns=len(waitable_train_metrics_refs),
             timeout=0.0,
         )
         if remaining_refs:
