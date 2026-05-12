@@ -19,6 +19,11 @@ from roll.distributed.scheduler.protocol import DataProto
 from roll.distributed.scheduler.resource_manager import ResourceManager
 from roll.models.model_providers import default_tokenizer_provider
 from roll.pipeline.agentic.agentic_pipeline import AgenticPipeline, compute_data_metrics
+from roll.pipeline.agentic.async_memory_fencing import (
+    fence_memory_updates_before_async_train,
+    should_flush_pending_updates_before_rollout,
+    unwrap_waitable_object_refs,
+)
 from roll.pipeline.agentic.multi_agentic_config import MemoryActorConfig
 from roll.pipeline.agentic.utils import (
     compute_discounted_returns,
@@ -963,13 +968,15 @@ class MemoryActorPipeline(AgenticPipeline):
         metrics.update(self._collect_train_step_metrics(actor_train_metrics_refs))
         return metrics
 
-    def _collect_train_step_metrics(self, train_metrics_refs: List[ray.ObjectRef]) -> Dict[str, Any]:
+    def _collect_train_step_metrics(self, train_metrics_refs: List[Any]) -> Dict[str, Any]:
+        if not train_metrics_refs:
+            return {}
         train_metrics: DataProto = DataProto.materialize_concat(data_refs=train_metrics_refs)
         return reduce_metrics(train_metrics.meta_info.pop("metrics", {}))
 
     def _start_memory_model_train(
         self, train_batch: DataProto, global_step: int
-    ) -> Tuple[Dict[str, Any], List[ray.ObjectRef]]:
+    ) -> Tuple[Dict[str, Any], List[Any]]:
         metrics = {}
 
         if self.pipeline_config.reference_for_memory:
@@ -1227,7 +1234,9 @@ class MemoryActorPipeline(AgenticPipeline):
                     # If a timeout is set, the main process unblocks after the timeout while any
                     # remaining updates continue running in the background on the memory actor.
                     flush_ref = None
-                    if self.global_memory_manager is not None:
+                    if self.global_memory_manager is not None and should_flush_pending_updates_before_rollout(
+                        has_pending_memory_train=self._has_pending_memory_train()
+                    ):
                         # if self.global_memory_manager is not None and self._warmup_complete:
                         flush_ref = self.global_memory_manager.flush_pending_updates_async(
                             timeout=self.pipeline_config.memory_config.memory_flush_timeout
@@ -1603,9 +1612,13 @@ class FullyAsyncMemoryActorPipeline(MemoryActorPipeline):
             return
 
         train_metrics_refs = self._pending_memory_train["train_metrics_refs"]
+        waitable_train_metrics_refs = unwrap_waitable_object_refs(train_metrics_refs)
+        if not waitable_train_metrics_refs:
+            self._finalize_pending_memory_train(global_step=global_step, metrics=metrics)
+            return
         ready_refs, remaining_refs = ray.wait(
-            train_metrics_refs,
-            num_returns=len(train_metrics_refs),
+            waitable_train_metrics_refs,
+            num_returns=len(waitable_train_metrics_refs),
             timeout=0.0,
         )
         if remaining_refs:
@@ -1660,7 +1673,14 @@ class FullyAsyncMemoryActorPipeline(MemoryActorPipeline):
                     train_batch = self.adjust_memory_batch(train_batch, mode=self.pipeline_config.batch_adjust_mode)
 
                     if self.global_memory_manager is not None:
-                        self.global_memory_manager.suspend(global_step)
+                        with Timer(name="flush_pending_updates_before_async_memory_train", logger=None) as flush_timer:
+                            flushed_count = fence_memory_updates_before_async_train(
+                                memory_manager=self.global_memory_manager,
+                                flush_timeout=self.pipeline_config.memory_config.memory_flush_timeout,
+                                global_step=global_step,
+                            )
+                        metrics["memory/flush_before_async_train_count"] = flushed_count
+                        metrics["time/flush_pending_updates_before_async_memory_train"] = flush_timer.last
 
                     self.memory_actor_train.load_states(blocking=True)
                     memory_train_metrics, train_metrics_refs = self._start_memory_model_train(train_batch, global_step)
